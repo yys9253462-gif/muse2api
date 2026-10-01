@@ -161,10 +161,25 @@ class MuseEngine:
             "Sec-Fetch-Dest": "empty",
             "Cookie": "; ".join(f"{k}={v}" for k, v in cur_cookies.items() if v),
         }
-        r = requests.get("https://muse.ai/api/session", headers=headers, timeout=12)
-        if r.status_code in (401, 403):
-            raise MuseAuthError(f"会话已失效 (/api/session HTTP {r.status_code})，请重新导入 cookie")
-        sj = r.json() if r.status_code == 200 else {}
+        try:
+            r = requests.get("https://muse.ai/api/session", headers=headers,
+                             timeout=12, allow_redirects=False)
+        except requests.RequestException as exc:
+            # 不回显请求内容：异常可能包含带凭据的代理 URL。
+            raise MuseGenerationError(
+                f"/api/session 网络请求失败 ({type(exc).__name__})；请检查服务器网络/代理后重试") from None
+        if r.status_code == 401:
+            raise MuseAuthError("会话认证失败 (/api/session HTTP 401)，请在官网确认登录后重新导入 cookie")
+        if r.status_code != 200:
+            hint = ("访问被拒绝，请检查服务器出口/地区/访问限制；不能据此判定 Cookie 失效"
+                    if r.status_code == 403 else "上游请求未成功，请稍后重试并检查服务器网络")
+            raise MuseGenerationError(f"/api/session HTTP {r.status_code}：{hint}")
+        try:
+            sj = r.json()
+        except ValueError:
+            raise MuseGenerationError("/api/session HTTP 200 返回非 JSON；会话状态未确认") from None
+        if not isinstance(sj, dict) or sj.get("status") != "assigned":
+            raise MuseGenerationError("/api/session HTTP 200 未返回 assigned 会话；请在官网检查账号/工作区状态")
         for c in r.cookies:
             if c.value:
                 cur_cookies[c.name] = c.value
@@ -392,7 +407,7 @@ class MuseEngine:
         if re.search(r"log in|sign in|create an account|登录|use another account", body):
             raise MuseAuthError("会话已被 muse.ai 登出（可能被其它登录挤掉或触发风控），"
                                 "请用浏览器扩展重新导入 cookie")
-        raise MuseAuthError("muse.ai 页面加载超时（未出现聊天输入框），请稍后重试")
+        raise MuseGenerationError("muse.ai 页面加载超时（未出现聊天输入框），请检查服务器网络后重试；未确认会话失效")
 
     def refresh(self, cookies: dict, expires: dict | None = None):
         if self.page:

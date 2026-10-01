@@ -175,16 +175,19 @@ class Store:
             _write(self.cfg.accounts_file, self.accounts)
             return acc
 
-    def touch_keepalive(self, aid: str, ok: bool = True, note: str = ""):
-        """记录账号自动保活状态与时间戳。当会话有效时，自动顺延到期时间。"""
+    def touch_keepalive(self, aid: str, ok: bool | None = True, note: str = ""):
+        """ok=None 仅记录未确认的检测；保留上次账号状态、成功保活时间和有效期。"""
         with _LOCK:
             now_ts = int(time.time())
             for a in self.accounts:
                 if a["id"] == aid:
-                    a["last_keepalive"] = now_ts
-                    a["ok"] = ok
-                    if ok:
-                        a["expires_at"] = now_ts + VML_TTL
+                    if ok is not None:
+                        a["ok"] = ok
+                    if ok is True:
+                        a["last_keepalive"] = now_ts
+                        # ponytail: 只信实际 Cookie 到期时间或原导入锚点，不凭检测成功虚推 48h。
+                        a["expires_at"] = account_expiry(
+                            a.get("cookies_exp"), a.get("expiry_anchor") or a.get("created_at"))
                     if note:
                         a["note"] = note[:300]
                     a["checked_at"] = now_ts

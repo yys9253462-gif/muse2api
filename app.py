@@ -58,7 +58,7 @@ if not log.handlers:
     log.addHandler(_h)
 
 CFG.ensure_dirs()
-app = FastAPI(title="muse2api", version="1.5.2")
+app = FastAPI(title="muse2api", version="1.5.3")
 
 # Cookie 助手脚本从 muse.ai 页面发起导入请求，需要放行该来源；
 # 浏览器扩展从 chrome-extension:// 发起，也一并放行。
@@ -1746,8 +1746,11 @@ async def test_account(aid: str, _=Depends(auth)):
                 store.mark(aid, True, "会话有效")
                 return {"ok": True, "message": "会话有效，可正常生成",
                         "synced": synced, "quota": quota}
-            except Exception as exc:  # noqa: BLE001
+            except MuseAuthError as exc:
                 store.mark(aid, False, str(exc)[:200])
+                return {"ok": False, "message": str(exc)[:200]}
+            except Exception as exc:  # noqa: BLE001
+                store.touch_keepalive(aid, None, f"测试未确认（保留账号状态）: {str(exc)[:200]}")
                 return {"ok": False, "message": str(exc)[:200]}
 
     res = await asyncio.to_thread(_probe)
@@ -2042,8 +2045,11 @@ def _probe_account_sync(aid: str, check_quota: bool = False) -> dict:
             "expires_at": updated.get("expires_at"),
             "quota": quota,
         }
+    except MuseAuthError as exc:
+        store.touch_keepalive(aid, False, f"保活认证失败: {str(exc)[:200]}")
+        return {"ok": False, "id": aid, "label": acc.get("label", aid), "error": str(exc)}
     except Exception as exc:  # noqa: BLE001
-        store.touch_keepalive(aid, False, f"保活异常: {str(exc)[:50]}")
+        store.touch_keepalive(aid, None, f"保活未确认（保留账号状态）: {str(exc)[:200]}")
         return {"ok": False, "id": aid, "label": acc.get("label", aid), "error": str(exc)}
 
 
